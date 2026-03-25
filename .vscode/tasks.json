@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "build",
+        "type": "shell",
+        "command": "cmake --build . --parallel 16",
+        "options": {
+            "cwd": "${workspaceFolder}/build"
+        },
+        "args": [
+        ],
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "presentation": {
+            "reveal": "always",
+            "panel": "shared",
+            "clear": false,
+            "focus": true
+         },
+        "problemMatcher": [],
+        "detail": "Run the custom Makefile to build the project."
+      }
+    ]
+  }

@@ -39,7 +39,6 @@ clean_main_build_output.bat
 /[Rr]elease
 /x64
 /.vs
-/.vscode
 /nbproject
 frmts/jpipkak/kdu_cache.cpp
 frmts/jpipkak/kdu_cache_wrapper.h
@@ -149,7 +148,6 @@ html/
 .pydevproject
 .cproject
 .idea
-.vscode
 .vs
 .vim
 

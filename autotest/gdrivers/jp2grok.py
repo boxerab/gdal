@@ -1595,6 +1595,98 @@ def test_jp2grok_vsicurl_remote():
 
 
 ###############################################################################
+# Test reading a remote JP2 via /vsigs/ (Google Cloud Storage, handled
+# natively by Grok's GSFetcher via libcurl).  Uses a public Sentinel-2
+# bucket on GCS.
+
+
+def test_jp2grok_vsigs_remote():
+
+    if not gdaltest.run_slow_tests():
+        pytest.skip("GDAL_RUN_SLOW_TESTS not set")
+    if "CURL_ENABLED=YES" not in gdal.VersionInfo("BUILD_INFO"):
+        pytest.skip("curl not enabled in this GDAL build")
+
+    gs_url = (
+        "/vsigs/gcp-public-data-sentinel-2/"
+        "tiles/10/S/DG/"
+        "S2A_MSIL1C_20150918T190346_N0204_R113_T10SDG_20150918T190345.SAFE/"
+        "GRANULE/L1C_T10SDG_A001254_20150918T190345/IMG_DATA/"
+        "T10SDG_20150918T190346_B01.jp2"
+    )
+
+    gdal.VSICurlClearCache()
+    try:
+        with gdal.config_option("GS_NO_SIGN_REQUEST", "YES"):
+            ds = gdal.Open(gs_url)
+        if ds is None:
+            pytest.skip("GCS host unreachable: " + gdal.GetLastErrorMsg())
+        assert ds.RasterXSize > 0
+        assert ds.RasterYSize > 0
+        assert ds.RasterCount >= 1
+        band = ds.GetRasterBand(1)
+        w = min(64, ds.RasterXSize)
+        h = min(64, ds.RasterYSize)
+        data = band.ReadRaster(0, 0, w, h, w, h)
+        assert data is not None and len(data) > 0
+        ds = None
+    finally:
+        gdal.VSICurlClearCache()
+
+
+###############################################################################
+# Test reading a remote JP2 via /vsiaz/ (Azure Blob Storage, handled
+# natively by Grok's AZFetcher via libcurl).  Requires AZURE_STORAGE_ACCOUNT
+# and either AZURE_STORAGE_SAS_TOKEN or AZURE_NO_SIGN_REQUEST=YES.
+# Skipped when Azure credentials are not available.
+
+
+def test_jp2grok_vsiaz_remote():
+
+    if not gdaltest.run_slow_tests():
+        pytest.skip("GDAL_RUN_SLOW_TESTS not set")
+    if "CURL_ENABLED=YES" not in gdal.VersionInfo("BUILD_INFO"):
+        pytest.skip("curl not enabled in this GDAL build")
+
+    # Need at minimum a storage account name
+    if not os.environ.get("AZURE_STORAGE_ACCOUNT"):
+        pytest.skip(
+            "AZURE_STORAGE_ACCOUNT not set; "
+            "provide Azure credentials to run this test"
+        )
+
+    # Expect a JP2 file path relative to the container in
+    # JP2GROK_AZURE_TEST_FILE, e.g.:
+    #   AZURE_STORAGE_ACCOUNT=sentinel2l2a01
+    #   JP2GROK_AZURE_TEST_FILE=/vsiaz/sentinel2-l2a/.../B02.jp2
+    az_url = os.environ.get("JP2GROK_AZURE_TEST_FILE", "")
+    if not az_url:
+        pytest.skip(
+            "JP2GROK_AZURE_TEST_FILE not set; "
+            "provide a /vsiaz/ JP2 path to run this test"
+        )
+
+    gdal.VSICurlClearCache()
+    try:
+        ds = gdal.Open(az_url)
+        if ds is None:
+            pytest.skip(
+                "Azure host unreachable or auth failed: " + gdal.GetLastErrorMsg()
+            )
+        assert ds.RasterXSize > 0
+        assert ds.RasterYSize > 0
+        assert ds.RasterCount >= 1
+        band = ds.GetRasterBand(1)
+        w = min(64, ds.RasterXSize)
+        h = min(64, ds.RasterYSize)
+        data = band.ReadRaster(0, 0, w, h, w, h)
+        assert data is not None and len(data) > 0
+        ds = None
+    finally:
+        gdal.VSICurlClearCache()
+
+
+###############################################################################
 # Test driver metadata
 
 

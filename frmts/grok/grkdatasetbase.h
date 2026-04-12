@@ -86,6 +86,8 @@
 
 #ifdef HAVE_CURL
 #include "cpl_aws.h"
+#include "cpl_azure.h"
+#include "cpl_google_cloud.h"
 #endif
 
 /**
@@ -114,8 +116,8 @@ template <size_t N> void safe_strcpy(char (&dest)[N], const std::string &src)
 /**
  * @brief True if @p filename is a network path handled natively by Grok.
  *
- * /vsis3/ is always handed to Grok (AWS credentials are resolved by GDAL
- * before the path reaches Grok).
+ * /vsis3/, /vsiaz/, /vsiadls/ and /vsigs/ are always handed to Grok
+ * (credentials are resolved by GDAL before the path reaches Grok).
  *
  * /vsicurl/ is only handed to Grok when the user explicitly opts in by
  * setting the OPJLIKE_VSICURL_NATIVE_OPT config option (or open option) to YES.
@@ -124,7 +126,8 @@ template <size_t N> void safe_strcpy(char (&dest)[N], const std::string &src)
  */
 static bool isGrokNetworkPath(const char *filename)
 {
-    if (STARTS_WITH(filename, "/vsis3/"))
+    if (STARTS_WITH(filename, "/vsis3/") || STARTS_WITH(filename, "/vsiaz/") ||
+        STARTS_WITH(filename, "/vsiadls/") || STARTS_WITH(filename, "/vsigs/"))
         return true;
 
     if (STARTS_WITH(filename, "/vsicurl/"))
@@ -362,10 +365,13 @@ static bool GrokCanRead(const char *filename)
 
 #if defined(HAVE_CURL) && defined(GRK_HAS_LIBCURL)
     // Cloud storage: Grok handles fetching natively via libcurl.
-    // For /vsis3/, GDAL resolves AWS credentials and passes them to Grok
-    // via grk_stream_params.  For /vsicurl/, Grok's HTTPFetcher strips the
-    // prefix and issues HTTP(S) range requests directly, honoring the
-    // shared .netrc/cookie options forwarded from GDAL.
+    // GDAL resolves provider-specific credentials and passes them
+    // to Grok via grk_stream_params.  Supported prefixes:
+    //   /vsis3/    — AWS S3 (SigV4)
+    //   /vsiaz/    — Azure Blob (SAS token)
+    //   /vsiadls/  — Azure Data Lake Storage
+    //   /vsigs/    — Google Cloud Storage (HMAC interop)
+    //   /vsicurl/  — generic HTTP(S)
     if (isGrokNetworkPath(filename))
     {
         if (hasUnsupportedHttpSettings())
@@ -850,6 +856,95 @@ struct GRKCodecWrapper
                              "Could not resolve AWS credentials "
                              "for %s",
                              pszFilename);
+                }
+            }
+
+            // For /vsiaz/ paths, resolve Azure credentials through GDAL's
+            // authentication chain and pass them to Grok.  The primary
+            // auth method is SAS tokens, which AZFetcher appends to the URL.
+            // username = storage account, password = SAS query string.
+            else if (strncmp(pszFilename, "/vsiaz/", 7) == 0)
+            {
+                auto poHelper = std::unique_ptr<VSIAzureBlobHandleHelper>(
+                    VSIAzureBlobHandleHelper::BuildFromURI(pszFilename + 7,
+                                                           "/vsiaz/"));
+                if (poHelper)
+                {
+                    const auto &osStorageAccount =
+                        poHelper->GetStorageAccount();
+                    const auto &osSAS = poHelper->GetSASQueryString();
+
+                    if (!osStorageAccount.empty())
+                        safe_strcpy(streamParams.username, osStorageAccount);
+                    if (!osSAS.empty())
+                        safe_strcpy(streamParams.password, osSAS);
+                }
+                else
+                {
+                    CPLError(CE_Warning, CPLE_AppDefined,
+                             "Could not resolve Azure credentials "
+                             "for %s",
+                             pszFilename);
+                }
+            }
+
+            // For /vsiadls/ paths, resolve Azure Data Lake credentials.
+            // Uses the same Azure auth chain as /vsiaz/ (SAS tokens).
+            // username = storage account, password = SAS query string.
+            else if (strncmp(pszFilename, "/vsiadls/", 9) == 0)
+            {
+                auto poHelper = std::unique_ptr<VSIAzureBlobHandleHelper>(
+                    VSIAzureBlobHandleHelper::BuildFromURI(pszFilename + 9,
+                                                           "/vsiadls/"));
+                if (poHelper)
+                {
+                    const auto &osStorageAccount =
+                        poHelper->GetStorageAccount();
+                    const auto &osSAS = poHelper->GetSASQueryString();
+
+                    if (!osStorageAccount.empty())
+                        safe_strcpy(streamParams.username, osStorageAccount);
+                    if (!osSAS.empty())
+                        safe_strcpy(streamParams.password, osSAS);
+                }
+                else
+                {
+                    CPLError(CE_Warning, CPLE_AppDefined,
+                             "Could not resolve Azure credentials "
+                             "for %s",
+                             pszFilename);
+                }
+            }
+
+            // For /vsigs/ paths, resolve GCS HMAC interop credentials.
+            // These are structurally identical to AWS access key / secret,
+            // and Grok's GSFetcher uses AWS SigV4-compatible signing.
+            else if (strncmp(pszFilename, "/vsigs/", 7) == 0)
+            {
+                const char *pszAccessKey = VSIGetPathSpecificOption(
+                    pszFilename, "GS_ACCESS_KEY_ID", "");
+                const char *pszSecretKey = VSIGetPathSpecificOption(
+                    pszFilename, "GS_SECRET_ACCESS_KEY", "");
+
+                if (pszAccessKey[0])
+                    safe_strcpy(streamParams.username, pszAccessKey);
+                if (pszSecretKey[0])
+                    safe_strcpy(streamParams.password, pszSecretKey);
+
+                if (!pszAccessKey[0] || !pszSecretKey[0])
+                {
+                    // Only warn if not using unsigned/public access
+                    if (!CPLTestBool(VSIGetPathSpecificOption(
+                            pszFilename, "GS_NO_SIGN_REQUEST", "NO")))
+                    {
+                        CPLError(CE_Warning, CPLE_AppDefined,
+                                 "GCS HMAC credentials not found for "
+                                 "%s; set GS_ACCESS_KEY_ID and "
+                                 "GS_SECRET_ACCESS_KEY, or "
+                                 "GS_NO_SIGN_REQUEST=YES for "
+                                 "public buckets",
+                                 pszFilename);
+                    }
                 }
             }
 #endif

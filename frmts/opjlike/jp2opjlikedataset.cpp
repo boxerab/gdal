@@ -1592,6 +1592,13 @@ GDALDataset *JP2OPJLikeDataset<CODEC, BASE>::Open(GDALOpenInfo *poOpenInfo)
             }
         }
     }
+    else if (poDS->bSingleTiled && nBlockYSize > 1024)
+    {
+        // GDALDatasetCopyWholeRaster never reads below the block height of a
+        // compressed source, so a strip block lets it read a huge single tile
+        // in swaths while the decode streams rows
+        nBlockYSize = 1024;
+    }
 
     GDALColorTable *poCT = nullptr;
 

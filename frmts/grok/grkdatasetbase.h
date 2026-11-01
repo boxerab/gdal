@@ -2392,9 +2392,10 @@ struct JP2GRKDatasetBase : public JP2DatasetBase
         // trigger post-processing (wait(nullptr) -> postMulti_).
         const int nTotalTiles = (postPreload.tile_x1 - postPreload.tile_x0) *
                                 (postPreload.tile_y1 - postPreload.tile_y0);
-        bool canUseFastPath = (nTotalTiles > 1 && m_codec && m_codec->psImage &&
-                               iLevel == 0 && eBufType != GDT_Float32 &&
-                               eBufType != GDT_Float64 && !bSyncFallback_);
+        bool canUseFastPath =
+            (nTotalTiles >= 1 && m_codec && m_codec->psImage && iLevel == 0 &&
+             eBufType != GDT_Float32 && eBufType != GDT_Float64 &&
+             !bSyncFallback_);
         if (canUseFastPath)
         {
             for (int i = 0; i < nBandCount && canUseFastPath; ++i)
@@ -2905,9 +2906,14 @@ struct JP2GRKDatasetBase : public JP2DatasetBase
         const int nFullY = nParentYSize >> iLevel;
         const bool bPartial = (swath_x0 != 0 || swath_y0 != 0 ||
                                swath_width < nFullX || swath_height < nFullY);
+        // full-width reads of a single tile are a scan: decode the whole
+        // tile asynchronously and serve every strip from it
+        const bool bSingleTileStrip =
+            this->bSingleTiled && swath_x0 == 0 && swath_width == nFullX;
         const bool bMissingAdviseRead =
-            bPartial && !this->fullDecompress_ && !bAdviseReadCalled_ &&
-            area_x0_ == 0 && area_y0_ == 0 && area_x1_ == 0 && area_y1_ == 0;
+            bPartial && !bSingleTileStrip && !this->fullDecompress_ &&
+            !bAdviseReadCalled_ && area_x0_ == 0 && area_y0_ == 0 &&
+            area_x1_ == 0 && area_y1_ == 0;
 
         if (bMissingAdviseRead)
         {
@@ -3021,8 +3027,16 @@ struct JP2GRKDatasetBase : public JP2DatasetBase
             if (!this->fullDecompress_)
             {
                 decompressParams.dw_reduced = true;
-                if (area_x0_ == 0 && area_y0_ == 0 && area_x1_ == 0 &&
-                    area_y1_ == 0)
+                if (bSingleTileStrip && area_x0_ == 0 && area_y0_ == 0 &&
+                    area_x1_ == 0 && area_y1_ == 0)
+                {
+                    decompressParams.dw_x0 = 0;
+                    decompressParams.dw_y0 = 0;
+                    decompressParams.dw_x1 = nFullX;
+                    decompressParams.dw_y1 = nFullY;
+                }
+                else if (area_x0_ == 0 && area_y0_ == 0 && area_x1_ == 0 &&
+                         area_y1_ == 0)
                 {
                     // No AdviseRead, but this swath covers the full image;
                     // use it as the decode window.

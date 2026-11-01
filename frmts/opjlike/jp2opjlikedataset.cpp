@@ -453,9 +453,31 @@ CPLErr JP2OPJLikeDataset<CODEC, BASE>::AdviseRead(
     GDALDataType eDT, int nBandCount, int *panBandList,
     CSLConstList papszOptions)
 {
+    CPLErr eErr =
+        BASE::AdviseRead(nXOff, nYOff, nXSize, nYSize, nBufXSize, nBufYSize,
+                         eDT, nBandCount, panBandList, papszOptions);
 
-    return BASE::AdviseRead(nXOff, nYOff, nXSize, nYSize, nBufXSize, nBufYSize,
-                            eDT, nBandCount, panBandList, papszOptions);
+    // Reduced resolution reads are served by the overview datasets, which
+    // keep their own advised window, so pass the window on in their
+    // coordinates.
+    for (int i = 0; i < this->nOverviewCount && eErr == CE_None; i++)
+    {
+        JP2OPJLikeDataset *poODS = this->papoOverviewDS[i];
+        const int nShift = poODS->iLevel;
+        const int nOvXOff = nXOff >> nShift;
+        const int nOvYOff = nYOff >> nShift;
+        const int nOvXEnd = std::min(poODS->nRasterXSize,
+                                     DIV_ROUND_UP(nXOff + nXSize, 1 << nShift));
+        const int nOvYEnd = std::min(poODS->nRasterYSize,
+                                     DIV_ROUND_UP(nYOff + nYSize, 1 << nShift));
+        if (nOvXEnd <= nOvXOff || nOvYEnd <= nOvYOff)
+            continue;
+        eErr = poODS->AdviseRead(nOvXOff, nOvYOff, nOvXEnd - nOvXOff,
+                                 nOvYEnd - nOvYOff, nOvXEnd - nOvXOff,
+                                 nOvYEnd - nOvYOff, eDT, nBandCount,
+                                 panBandList, papszOptions);
+    }
+    return eErr;
 }
 
 /************************************************************************/

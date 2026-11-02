@@ -2749,15 +2749,16 @@ struct JP2GRKDatasetBase : public JP2DatasetBase
         return true;
     }
 
-    // a wait releases the tile rows above the one containing swath.y0
+    // a wait releases the tile rows above the one containing swath.y0, and
+    // the decoded rows above swath.y0 of a single tile
     void waitForSwath(grk_wait_swath &swath)
     {
         grk_decompress_wait(m_codec->pCodec, &swath);
-        const int tileRowTop =
-            m_nTileHeight
-                ? static_cast<int>(swath.y0 / m_nTileHeight * m_nTileHeight)
-                : 0;
-        cacheFirstResidentY_ = std::max(cacheFirstResidentY_, tileRowTop);
+        int residentTop = static_cast<int>(swath.y0);
+        if (!this->bSingleTiled && m_nTileHeight)
+            residentTop =
+                static_cast<int>(swath.y0 / m_nTileHeight * m_nTileHeight);
+        cacheFirstResidentY_ = std::max(cacheFirstResidentY_, residentTop);
     }
 
     /**
@@ -3222,7 +3223,11 @@ struct JP2GRKDatasetBase : public JP2DatasetBase
             initializedAsync = false;
         }
 
-        auto postPreload = decompressAsynch(nullptr, nullptr, nXOff, nYOff,
+        // a swath wait on a single tile releases the decoded rows above it
+        auto postPreload =
+            bSingleTiled ? decompressAsynch(nullptr, nullptr, 0, 0,
+                                            nRasterXSize_, nRasterYSize_)
+                         : decompressAsynch(nullptr, nullptr, nXOff, nYOff,
                                             nWidthToRead, nHeightToRead);
         if (!postPreload.asynch_)
         {

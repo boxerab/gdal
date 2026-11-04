@@ -611,6 +611,7 @@ struct GRKCodecWrapper
             streamParams.read_fn = JP2Dataset_Read;
             streamParams.seek_fn = JP2Dataset_Seek;
             streamParams.user_data = psJP2File;
+            streamParams.from_network = !VSIIsLocal(pszFilename);
         }
         pCodec = grk_decompress_init(&streamParams, &decompressParams);
         if (pCodec == nullptr)
